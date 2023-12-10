@@ -2,90 +2,65 @@
 # @Time     :2023/12/8 18:11
 # @Author   : anliu
 # @File     :entropy_weight_for_refund_rate.py
-# @Theme    :PyCharm
-
+# @Theme    :对不同区间的退款率计算权重
+import sys
 import warnings
+
 warnings.filterwarnings("ignore")
 import pandas as pd
 import numpy as np
 
-def get_score(wi_list,data):
+
+def standardization(df, pos_col_list=None, neg_col_list=None):
     """
-    :param wi_list: 权重系数列表
-    :param data：评价指标数据框
-    :return:返回得分
+    :param df:目标数据
+    :param pos_col_list: 需要处理的正向指标列名列表，类型为列表或None
+    :param neg_col_list: 需要处理的负向指标列名列表，类型为列表或None
+    :return: 输出处理结果
     """
-
-    #  将权重转换为矩阵
-    cof_var = np.mat(wi_list)
-
-    #  将数据框转换为矩阵
-    context_train_data = np.mat(data)
-
-    #  权重跟自变量相乘
-    last_hot_matrix = context_train_data * cof_var.T
-    last_hot_matrix = pd.DataFrame(last_hot_matrix)
-
-    #  累加求和得到总分
-    last_hot_score = list(last_hot_matrix.apply(sum))
-
-    #  max-min 归一化
-
-    # last_hot_score_autoNorm = autoNorm(last_hot_score)
-
-    # 值映射成分数（0-100分）
-
-    # last_hot_score_result = [i * 100 for i in last_hot_score_autoNorm]
-
-    return last_hot_score
+    if pos_col_list == None and neg_col_list == None:
+        return df
+    elif pos_col_list != None and neg_col_list == None:
+        return (df[pos_col_list] - df[pos_col_list].min()) / (df[pos_col_list].max() - df[pos_col_list].min())
+    elif pos_col_list == None and neg_col_list != None:
+        return (df[neg_col_list].max - df[neg_col_list]) / (df[neg_col_list].max() - df[neg_col_list].min())
+    else:
+        a = (df[pos_col_list] - df[pos_col_list].min()) / (df[pos_col_list].max() - df[pos_col_list].min())
+        b = (df[neg_col_list].max() - df[neg_col_list]) / (df[neg_col_list].max() - df[neg_col_list].min())
+        return pd.concat([a, b], axis=1)
 
 
-
-def get_entropy_weight(data):
+def get_entropy_weight(df):
     """
-    :param data: 评价指标数据框
-    :return: 各指标权重列表
+    :param df: 预处理好的数据
+    :return: 输出权重-数组。
     """
-    # 数据标准化
-    data = (data - data.min())/(data.max() - data.min())
-    m,n=data.shape
-    #将dataframe格式转化为matrix格式
-    data=data.as_matrix(columns=None)
-    k=1/np.log(m)
-    yij=data.sum(axis=0)
-    #第二步，计算pij
-    pij=data/yij
-    test=pij*np.log(pij)
-    test=np.nan_to_num(test)
-
-    #计算每种指标的信息熵
-    ej=-k*(test.sum(axis=0))
-    #计算每种指标的权重
-    wi=(1-ej)/np.sum(1-ej)
-
-    wi_list=list(wi)
-
-
-    return  wi_list
-
+    K = 1 / np.log(len(df))
+    p = df / np.sum(df)
+    e = -K * np.sum(p * np.log(p))
+    d = 1 - e
+    w = d / d.sum()
+    return w
 
 
 if __name__ == '__main__':
+    data0 = pd.read_excel(r'./data/parent_merchant_basedata_for_cluster.xlsx', encoding='utf8')
+    df_refund_grade_dummies = pd.get_dummies(data0.refund_grade, prefix='refund_grade')
+    series_refund = data0['refund_rate']
+    df = pd.concat([series_refund, df_refund_grade_dummies], axis=1)
 
-    ##
-    data0 = pd.read_excel("C:\\Users\\Oreo\\Desktop\\test2.xlsx", encoding='utf8')
+    df_dummies_refund_rate = pd.DataFrame()
+    df_dummies_refund_rate['refund_rate_0'] = df.refund_rate * df.refund_grade_0
+    df_dummies_refund_rate['refund_rate_低'] = df.refund_rate * df.refund_grade_低
+    df_dummies_refund_rate['refund_rate_中'] = df.refund_rate * df.refund_grade_中
+    df_dummies_refund_rate['refund_rate_高'] = df.refund_rate * df.refund_grade_高
 
-    data = data0.iloc[:, 1:10]
-    mm=data
-    wi_list=get_entropy_weight(data)
-    score_list=get_score(mm,wi_list)
-    mm['score']=score_list
-    mm['科室']=data0['科室']
-    # 然后对数据框按得分从大到小排序
-    result = mm.sort_values(by='score', axis=0, ascending=False)
-    result['rank'] = range(1, len(result) + 1)
+    df_standardization = standardization(df_dummies_refund_rate, neg_col_list=['refund_rate_0', 'refund_rate_低', 'refund_rate_中', 'refund_rate_高'])
 
-    print(result)
+    w = get_entropy_weight(df_standardization)
+    print('变量权重：\n', w)
 
-    # 写出csv数据
-    result.to_csv('C:\\Users\\Oreo\\Desktop\\test2_result.csv', index=False)
+    df_score = df_standardization * w
+    df_score['score'] = df_score.sum(axis=1)
+
+    df_score.to_excel(r'./data/df_dummies_refund_rate_score.xlsx')
